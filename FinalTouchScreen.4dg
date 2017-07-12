@@ -1,0 +1,702 @@
+#platform "uLCD-32PTU"
+
+/*************************************************
+* Filename: FAT16runprog.4dg
+* Created: 2008/11/06
+* Author: 4D
+* Description: test program for file_Run()
+*
+* NB:- This program must be written to flash so
+* it becomes the top down program.
+*
+**************************************************/
+
+#inherit "4DGL_16bitColours.fnc"
+//#inherit "FONT4.fnt"
+
+#MODE RUNFLASH      // this prog intended to be 'front end' and run from FLASH
+
+#STACK 800          // make sure stack is big enough for main prog and called functions/programs
+
+
+
+// colour scheme
+#CONST
+    WINDOW_COLOR        GRAY
+    TITLEBAR_COLOR      NAVY
+    TITLETXT_COLOR      CYAN
+    STATUSBAR_COLOR     GRAY
+    STATUSTXT_COLOR     YELLOW
+#END
+
+//--------------------------------------------------------------------------------------------
+// local global variables
+//--------------------------------------------------------------------------------------------
+
+
+var temp;
+var D;                                  // pointer to disk struct
+
+                                        // (we keep 2 copies so we can test for a state -
+var tempstr[20];                        // general purpose string, 40 bytes
+
+
+ var lastpressed:=12;                   //keeps track of last pressed button
+// fixed button texts
+#DATA
+    word buttons tst1, tst2, tst3, tst4, tst5, tst6, tst7, tst8, tst9, tst10, tst12, tst11, btnexit     //tst11,
+    byte tst1  " 1 \0"
+    byte tst2  " 2 \0"
+    byte tst3  " 3 \0"
+    byte tst4  " 4 \0"
+    byte tst5  " 5 \0"
+    byte tst6  " 6 \0"
+    byte tst7  " 7 \0"
+    byte tst8  " 8 \0"
+    byte tst9  " 9 \0"
+    byte tst10 " 0 \0"
+    /*byte tst1  "\n  0  \n \0"
+    byte tst2  "\n  1  \n \0"
+    byte tst3  "\n  2  \n \0"
+    byte tst4  "\n  3  \n \0"
+    byte tst5  "\n  4  \n \0"
+    byte tst6  "\n  5  \n \0"
+    byte tst7  "\n  6  \n \0"
+    byte tst8  "\n  7  \n \0"
+    byte tst9  "\n  8  \n \0"
+    byte tst10 "\n  9  \n \0"   */
+    /*
+    byte tst1  "\n\n    1   \n\n \0"
+    byte tst2  "\n\n    2   \n\n \0"
+    byte tst3  "\n\n    3   \n\n \0"
+    byte tst4  "\n\n    4   \n\n \0"
+    byte tst5  "\n\n    5   \n\n \0"
+    byte tst6  "\n\n    6   \n\n \0"
+    byte tst7  "\n\n    7   \n\n \0"
+    byte tst8  "\n\n    8   \n\n \0"
+    byte tst9  "\n\n    9   \n\n \0"
+    byte tst10 "\n\n    0   \n\n \0"
+      */
+    //byte tst11 "0\0"
+    byte tst12 "CLR\0"
+    byte tst11 "OPEN\0"
+    byte btnexit "_\0"
+#END
+
+#constant MAXBUTTONS sizeof(buttons)
+
+
+// mount the drive, return status message
+// and D will be null if mount fails
+func init_Drive()
+    var retry := 10;
+    if(!(D := file_Mount()))
+        while(retry--)
+            if((D := file_Mount())) break;
+        wend
+        if (retry) return "Mount Failed!";
+    endif
+    return "Enter Passcode";//"Disk mounted";
+endfunc
+
+//==================================================================================================
+func main()
+    var res;            // message from window
+
+
+    gfx_Cls();
+    txt_Set(FONT_SIZE, FONT3);
+    print("Memory available = ",mem_Heap(),"\n");  // show the biggest chunk we have
+
+     gfx_Set(SCREEN_MODE,LANDSCAPE_R);
+
+
+    aWindow.title := "Automated Locker";
+    aWindow.xpos := 0;//50;
+    aWindow.ypos := 0;//25;
+    aWindow.font := FONT3;//FONT2;
+    aWindow(INITIALIZE);                                     // draw window / buttons for the first time
+
+    pause(500);
+
+
+    pin_Set(OUTPUT,IO1_PIN);//set pin 1 to output-JJ
+
+    var pass:= 0000;//initialize password to empty
+    var validPass:=1234;//stores permanent password
+    aWindow.statusbartext := init_Drive();                   // mount the disk, setting the status message
+    aWindow(REDRAW_STATUS);                                  // update the status bar
+
+    var handle;
+    handle:=file_Open("PASS.txt",'r');
+    var temp:='&';//:="0000";
+    file_Read(temp,5,handle);
+    file_Close(handle);
+
+
+      /*
+      I used code found at this link to convert the string to a number
+      http://forum.4dsystems.com.au/forum/forum-aa/4d-systems-software/workshop-4-designer-environment-picaso/4244-converting-string-to-number
+      */
+
+    var ch, n;
+    var str ;
+    str:= str_Ptr(temp);
+    n := 0 ;
+    while ( str_GetC(&str, &ch))
+    if ((ch > '9') || (ch < '0')) break;
+    n := n * 10;
+    n := n + (ch -'0');
+    wend
+    validPass:=n;//sets pass to number found in SD card
+
+    var passPtr:=0;    //keeps track of which number entered
+    var enteredPass:=0;
+    var tempString:= " ";
+    var admnLogin:=0;
+    var adminPassword:=0258;
+    var tempPassword;
+    // now just stay in a loop
+    repeat
+        res := aWindow(SCAN);                                // scan for any changes
+
+        // if return value non zero, its a button number
+
+        if(res)
+            if(res == MAXBUTTONS)                     // if it was the exit (last) button
+               if (admnLogin==0)
+                      tempString:="                               ";
+                    to(tempstr); print([STR]tempString);                // print the return value to the temp buffer
+                    to(APPEND); putstr("    ");                    // clear string tail
+                    aWindow.statusbartext := tempstr;                   // use temp buffer for status text
+                    aWindow(REDRAW_STATUS);                             // update the status bar
+
+
+
+                    to(tempstr); print("Enter Admin Password");//print(enteredPass);print(validPass);                 // print the return value to the temp buffer
+                    to(APPEND); putstr("      ");                    // clear string tail
+                    aWindow.statusbartext := tempstr;                   // use temp buffer for status text
+                     aWindow(REDRAW_STATUS);                             // update the status bar
+                      //aWindow.title := "Automated Locker - ADMIN MODE";
+
+                     //aWindow(INITIALIZE);
+
+                    passPtr:=0;
+                    enteredPass:=0;
+                    admnLogin:=1;
+                else
+                  tempString:="                               ";
+                    to(tempstr); print([STR]tempString);                // print the return value to the temp buffer
+                    to(APPEND); putstr("    ");                    // clear string tail
+                    aWindow.statusbartext := tempstr;                   // use temp buffer for status text
+                    aWindow(REDRAW_STATUS);                             // update the status bar
+
+                   to(tempstr); print("Enter Password");//print(enteredPass);print(validPass);                 // print the return value to the temp buffer
+                    to(APPEND); putstr("                ");                    // clear string tail
+                    aWindow.statusbartext := tempstr;                   // use temp buffer for status text
+                    aWindow(REDRAW_STATUS);                             // update the status bar
+                    //aWindow.title := "Automated Locker ";
+
+                    //aWindow(INITIALIZE);
+
+                    passPtr:=0;
+                    enteredPass:=0;
+                    admnLogin:=0;
+                endif
+            else
+                // update status and title
+               // to(tempstr); putstr(buttons[res-1]);            // print the button text to the temp buffer
+               // to(APPEND); putstr("         ");                    // clear string tail
+               // aWindow.title := tempstr;                           // use temp buffer for title text
+               // aWindow(REDRAW_TITLE);                              // update the title bar
+
+                 lastpressed:=res-1;
+                if (res<11&&passPtr<4) //number pressed
+//                add digit to passcode
+                    if(res!=10)
+                    enteredPass:=(enteredPass*10)+res;//adds password to number
+                    endif
+                    passPtr:=passPtr+1;//increment password pointer
+
+                     tempString:="                               ";
+                    to(tempstr); print([STR]tempString);                // print the return value to the temp buffer
+                    to(APPEND); putstr("    ");                    // clear string tail
+                    aWindow.statusbartext := tempstr;                   // use temp buffer for status text
+                    aWindow(REDRAW_STATUS);                             // update the status bar
+
+                    if(passPtr==0)
+                        tempString:=" \0";
+                    else if (passPtr==1)
+                        tempString:="#######              \0";
+                    else if (passPtr==2)
+                        tempString:="#######  #######  \0";
+                    else if (passPtr==3)
+                        tempString:="#######  #######  #######  \0";
+                    else if (passPtr>=4)
+                        tempString:="#######  #######  #######  #######\0";
+                    endif
+
+                    to(tempstr); print([STR]tempString);                // print the return value to the temp buffer
+                    to(APPEND); putstr("    ");                    // clear string tail
+                    aWindow.statusbartext := tempstr;                   // use temp buffer for status text
+                    aWindow(REDRAW_STATUS);                             // update the status bar
+
+                endif
+
+
+
+
+                if(res==11)   //CLR pressed
+                    enteredPass:=0;    //clear password
+                    passPtr:=0;   //reset password pointer
+                    to(tempstr); print("                                   ");                // print the return value to the temp buffer
+                    to(APPEND); putstr(" ");                    // clear string tail
+                    aWindow.statusbartext := tempstr;                   // use temp buffer for status text
+                    aWindow(REDRAW_STATUS);                             // update the status bar
+                endif
+
+                if(res==12&&admnLogin==0)   //open pressed
+
+                       tempString:="                               ";
+                    to(tempstr); print([STR]tempString);                // print the return value to the temp buffer
+                    to(APPEND); putstr("    ");                    // clear string tail
+                    aWindow.statusbartext := tempstr;                   // use temp buffer for status text
+                    aWindow(REDRAW_STATUS);                             // update the status bar
+
+
+                    if(enteredPass!=validPass)
+                        to(tempstr); print("Invalid Password");//print(enteredPass);print(validPass);                 // print the return value to the temp buffer
+                       to(APPEND); putstr("              ");                    // clear string tail
+                       aWindow.statusbartext := tempstr;                   // use temp buffer for status text
+                       aWindow(REDRAW_STATUS);                             // update the status bar
+                        enteredPass:=0;    //clear password
+                        passPtr:=0;   //reset password pointer
+                    else if(enteredPass==validPass)
+                       to(tempstr); print("Password Accepted");                 // print the return value to the temp buffer
+                       to(APPEND); putstr("           ");                    // clear string tail
+                       aWindow.statusbartext := tempstr;                   // use temp buffer for status text
+                       aWindow(REDRAW_STATUS);                             // update the status bar
+
+
+                       pin_HI(IO1_PIN);//set pin 1 to high
+                       pause(5000);//pauses for 10000 miliseconds
+                       pin_LO(IO1_PIN);//sets pin 1 back to low
+                       to(tempstr); print("Solenoid Released");                 // print the return value to the temp buffer
+                       to(APPEND); putstr("           ");                    // clear string tail
+                       aWindow.statusbartext := tempstr;                   // use temp buffer for status text
+                       aWindow(REDRAW_STATUS);                             // update the status bar
+
+                        //enteredPass:=0;    //clear password
+                        //passPtr:=0;   //reset password pointer
+                   endif
+                endif
+
+                if(res==12&&admnLogin==1) //entering admin password
+                tempString:="                               ";
+                    to(tempstr); print([STR]tempString);                // print the return value to the temp buffer
+                    to(APPEND); putstr("    ");                    // clear string tail
+                    aWindow.statusbartext := tempstr;                   // use temp buffer for status text
+                    aWindow(REDRAW_STATUS);                             // update the status bar
+
+                   if(enteredPass==adminPassword)
+                        admnLogin:=2;//enter new password
+                        to(tempstr); print("Admin Logged In. Enter Password.");                 // print the return value to the temp buffer
+                        to(APPEND); putstr(" ");                    // clear string tail
+                        aWindow.statusbartext := tempstr;                   // use temp buffer for status text
+                        aWindow(REDRAW_STATUS);                             // update the status bar
+                        enteredPass:=0;    //clear password
+                        passPtr:=0;   //reset password pointer
+                    else
+                       to(tempstr);print("Wrong Admin Password");// print the return value to the temp buffer
+                        to(APPEND); putstr("           ");                    // clear string tail
+                        aWindow.statusbartext := tempstr;                   // use temp buffer for status text
+                        aWindow(REDRAW_STATUS);                             // update the status bar
+                        enteredPass:=0;    //clear password
+                        passPtr:=0;   //reset password pointer
+                    endif
+                else if(res==12&&admnLogin==2) //new password entered first time
+                tempString:="                               ";
+                    to(tempstr); print([STR]tempString);                // print the return value to the temp buffer
+                    to(APPEND); putstr("    ");                    // clear string tail
+                    aWindow.statusbartext := tempstr;                   // use temp buffer for status text
+                    aWindow(REDRAW_STATUS);                             // update the status bar
+
+                    admnLogin:=3;//confirm new password
+                    to(tempstr); print("Enter Password Again");                 // print the return value to the temp buffer
+                    to(APPEND); putstr("           ");                    // clear string tail
+                    aWindow.statusbartext := tempstr;                   // use temp buffer for status text
+                    aWindow(REDRAW_STATUS);                             // update the status bar
+                    tempPassword:=enteredPass;//sets temp password to entered code
+                    enteredPass:=0;    //clear password
+                    passPtr:=0;   //reset password pointer
+                else if(res==12&&admnLogin==3) //New Password confirmation
+                    admnLogin:=0;//reset login
+                    if(enteredPass==tempPassword)
+                        //enteredPass:=[STR]enteredPass;//+"\0";
+                        //var tempNumString:=enteredPass;
+                        //tempNumString:=([STR]*enteredPass);
+
+                        file_Erase("PASS.txt");
+
+                        handle:=file_Open("PASS.txt",'a');    //save new password to SD card
+                       //str_GetD(str_Ptr(enteredPass),tempNumString);
+
+
+                          //file_PutS(([STR]*enteredPass),handle);  BREAKS
+
+
+                        var stringNumber:="";
+                        var p1,p2,p3,p4:=0;
+                        p1:=enteredPass%10;
+                        enteredPass:=(enteredPass-p1)/10;
+                        p2:=enteredPass%10;
+                        enteredPass:=(enteredPass-p2)/10;
+                        p3:=enteredPass%10;
+                        enteredPass:=(enteredPass-p3)/10;
+                        p4:=enteredPass%10;
+                        enteredPass:=(enteredPass-p4)/10;
+                        //file_PutS("_",handle);
+                        file_PutS(getChar(p4),handle);
+                        file_PutS(getChar(p3),handle);
+                        file_PutS(getChar(p2),handle);
+                        file_PutS(getChar(p1),handle);
+                        //file_PutS("^",handle);
+                        //tempNumString:=str_Ptr(stringNumber);
+                        //file_PutS(tempNumString,handle);
+                        file_Close(handle);
+                         to(tempstr); print("Changed. Restart Screen.");                // print the return value to the temp buffer
+                        to(APPEND); putstr("           ");                    // clear string tail
+                        aWindow.statusbartext := tempstr;                   // use temp buffer for status text
+                        aWindow(REDRAW_STATUS);                             // update the status bar
+                        enteredPass:=0;    //clear password
+                        passPtr:=0;   //reset password pointer
+                    else //user entered 2 different passwords
+                        to(tempstr); print("Password Mismatch. Left Admin Mode.");                // print the return value to the temp buffer
+                        to(APPEND); putstr(" ");                    // clear string tail
+                        aWindow.statusbartext := tempstr;                   // use temp buffer for status text
+                        aWindow(REDRAW_STATUS);                             // update the status bar
+                        enteredPass:=0;    //clear password
+                        passPtr:=0;   //reset password pointer
+                    endif
+                endif
+
+            endif
+
+        endif
+
+    forever
+
+endfunc
+
+
+
+// enumeration for the window's sub functions
+#constant INITIALIZE, UPDATE, SCAN, REDRAW_TITLE, REDRAW_STATUS
+
+
+ //################################
+func getChar(var number)
+        if(number==0)
+            return "0";
+        else if(number==1)
+            return "1";
+        else if(number==2)
+            return "2";
+        else if(number==3)
+            return "3";
+        else if(number==4)
+            return "4";
+        else if(number==5)
+            return "5";
+        else if(number==6)
+            return "6";
+        else if(number==7)
+            return "7";
+        else if(number==8)
+            return "8";
+        else if(number==9)
+            return "9";
+        endif
+        return "X";
+
+endfunc
+//#################################
+
+
+// example for a Window object
+func aWindow(var subfunc)
+
+    // window properties
+    var private xpos, ypos;                         // window position
+    var private windowWidth := 320;//240;//140;                 // default window width
+    var private windowHeight := 240;//284;                // default window height
+    var private windowcolor := WINDOW_COLOR;        // default window colour
+
+    // title bar properties
+    //var private title := "NO NAME";                 // title bar text pointer, set default title bar text
+    var private title;                 // title bar text pointer
+    var private font := FONT3;                      // default font
+    var private titlebarheight := 20;               // default title bar height
+    var private titlebarcolor := TITLEBAR_COLOR;    // default title bar colour
+    var private titletextcolor := TITLETXT_COLOR;   // default title text colour
+
+    // status bar properties
+    //var private statusbartext := "status";          // status bar text pointer, set default status bar text
+    var private statusbartext;                      // status bar text pointer
+    var private statusbarheight := 20;              // default status bar height
+    var private statusbarcolor := STATUSBAR_COLOR;  // default status bar colour
+    var private statustextcolor := BLACK;//STATUSTXT_COLOR; // default status text colour
+
+    var private btncolor := LIGHTGREY;              // default button colour
+    var private textcolor := BLACK;                 // default text colour
+    var private xgap := 4;                        // horizontal gap between buttons
+    var private ygap:= 4;                          // vertical gap between buttons
+
+    // tbd, there is no need to have touch test co-ords private,
+    // making them local vaiables will free up some precious memory
+    // for the running app
+    var private touchX1[MAXBUTTONS];                // touch regions for the buttons
+    var private touchY1[MAXBUTTONS];
+    var private touchX2[MAXBUTTONS];
+    var private touchY2[MAXBUTTONS];
+    var private vButtonState[MAXBUTTONS];           // button state flags (bit 0 = up:down state)
+    var private vOldButtonState[MAXBUTTONS];        // OLD button state flags (bit 0 = up:down state)
+
+    var private lastkey;                            // last button pressed
+
+    // messages
+    var private touchState;                         // window touch status
+    var private touchX;                             // window x position
+    var private touchY;                             // window y position
+
+
+    // local variables
+    var n, x, y, x1, y1, x2, y2, oldFG, oldBG, oldFont, r, retval;
+
+    // save the things we will change
+    oldFont := peekW(TXT_FONT_ID);
+    oldFG   := peekW(TEXT_COLOUR);
+    oldBG   := peekW(TEXT_BACKGROUND);
+
+    // functions methods
+    gosub(subfunc), (Initialize, Update, Scan, RedrawTitleBar, RedrawStatusBar);
+
+    // restore things we changed
+    txt_FontID(oldFont);
+    txt_FGcolour(oldFG);
+    txt_BGcolour(oldBG);
+
+    //return retval;                                  // exit the window function with result of method
+    goto exitfunc;
+
+    //--------------------------------------------------
+    // reset the window and redraw the buttons to the up state
+    //--------------------------------------------------
+    Initialize:
+        touch_Set(TOUCH_ENABLE);                                                                                                    // enable the touch screen
+        gfx_Panel(PANEL_RAISED, xpos, ypos, windowWidth, titlebarheight, titlebarcolor);                                            // draw title bar panel
+        gfx_Panel(PANEL_SUNKEN, xpos, peekW(GFX_Y2), windowWidth, windowHeight-titlebarheight-statusbarheight, windowcolor);        // draw main window panel
+        gfx_Panel(PANEL_RAISED, xpos, peekW(GFX_Y2), windowWidth, statusbarheight, statusbarcolor);                                 // draw status bar panel
+
+        x := xpos+windowWidth-titlebarheight;
+        //x := xpos+windowWidth-titlebarheight;
+        y := ypos+2;
+        gfx_Button(BUTTON_UP, x, y, OLIVE, ORANGE, FONT1, 1, 1, btnexit );      // place the quit button
+
+        gosub RedrawTitleBar;                                                   // set the title
+        gosub RedrawStatusBar;                                                  // set the status bar text
+
+        x1 := xpos;//+24;
+        y1 := ypos+20;//+30;//26;                                  // set the position of the first button offset in the window
+
+        for(n:=0; n<MAXBUTTONS-1; n++)                  // draw the 4 ush buttons
+
+            // reset the button states
+            vButtonState[n]:=UP;
+            vOldButtonState[n]:=UP;
+
+            // place a button
+            gfx_Button( BUTTON_UP, x1, y1, btncolor, textcolor, font, 3, 3, buttons[n] );
+
+            // get the bottom/right extent
+            x2 := gfx_Get(RIGHT_POS);
+            y2 := gfx_Get(BOTTOM_POS);
+
+            // register the button position
+            touchX1[n] := x1;
+            touchY1[n] := y1;
+            touchX2[n] := x2;
+            touchY2[n] := y2;
+
+            //JJ's Button Layout Modification
+            if(n%3==2)
+            y1 := y2 + ygap;                    // move down
+            x1 := xpos;
+            endif
+            if(n%3==0)
+            //y1 := y2 + ygap;
+            x1 := windowWidth/3;
+            endif
+            if(n%3==1)
+            //y1 := y2 + ygap;
+            x1 := 2*(windowWidth/3);
+            endif
+        next
+
+        touchX1[n] := x;                        // finally, register exit button position
+        touchY1[n] := y;
+        touchX2[n] := x+20;
+        touchY2[n] := y+20;
+
+        title := "NO NAME";                     // set default title bar text
+        statusbartext := "status...";           // set default status bar text
+
+        /*
+        Do any other initializions here
+        */
+
+        endsub;
+
+    //--------------------------------------------------
+    // Update status bar text
+    //--------------------------------------------------
+     RedrawStatusBar:
+        txt_FontID(FONT3);
+        txt_FGcolour(statustextcolor);
+        txt_BGcolour(statusbarcolor);
+        gfx_MoveTo(xpos+8, ypos+windowHeight-18);
+        putstr(statusbartext);                         // set the status bar text
+        endsub;
+
+
+    //--------------------------------------------------
+    // Update status bar text
+    //--------------------------------------------------
+     RedrawTitleBar:
+        txt_FontID(FONT2);
+        txt_FGcolour(titletextcolor);
+        txt_BGcolour(titlebarcolor);
+        gfx_MoveTo(xpos+8, ypos+5);
+        title[7] := 0;  // ADDED (truncate title string
+        putstr(title);                                 // set the title text
+        endsub;
+
+    //--------------------------------------------------
+    // Update any buttons that have changed state
+    //--------------------------------------------------
+
+
+    Update:
+         if (lastpressed<12)
+            gfx_Button( vButtonState[lastpressed], touchX1[lastpressed], touchY1[lastpressed], LIGHTGREY, BLACK, font, 3, 3, buttons[lastpressed] ); // redraw the last black button
+         endif
+         for(n:=0; n<MAXBUTTONS-1; n++)
+            if ( vButtonState[n] != vOldButtonState[n])
+                vOldButtonState[n] := vButtonState[n];
+                //if(n < MAXBUTTONS-1)
+                    gfx_Button( vButtonState[n], touchX1[n], touchY1[n], BLACK, WHITE, font, 3, 3, buttons[n] ); // redraw the button
+                    lastpressed:=n;
+                //else
+                //    gfx_Button(vButtonState[n], touchX1[n], touchY1[n], OLIVE, ORANGE, FONT1, 1, 1, btnexit );      // redraw the quit button correctly
+                //endif
+
+            endif
+        next
+
+        /*
+        Do any other update operations here....
+        */
+
+    endsub;
+
+    //--------------------------------------------------
+    // scan for any button presses
+    //--------------------------------------------------
+    Scan:
+    touchState := touch_Get(TOUCH_STATUS);                  // save touchscreen status
+    touchX := touch_Get(TOUCH_GETX);                        // and current position
+    touchY := touch_Get(TOUCH_GETY);
+
+    // if screen touched,
+    if(touchState == TOUCH_PRESSED)
+
+        // scan the hot spots list
+        while (n < MAXBUTTONS && !r)
+            if (touchX >= touchX1[n] && touchX < touchX2[n] && touchY >= touchY1[n] && touchY < touchY2[n]) r := n+1;
+            n++;
+        wend
+
+        // if any button was pressed
+        if(r)
+            lastkey := r;                                   // remeber the button
+            vButtonState[r-1] := DOWN;                      // set it to down state
+            gosub Update;                                   // update the button action
+        endif
+    endif
+
+    if((touchState == TOUCH_RELEASED) && lastkey)           // if touch released and we remember a previous button press,
+        retval := lastkey;                                  // set return value with the button number
+        vButtonState[lastkey-1] := UP;                      // last button is now UP
+        lastkey := 0;                                       // clear button memory
+        gosub Update;                                       // update the button action
+    endif
+    endsub;
+
+exitfunc:
+    return retval;
+endfunc
+
+
+
+//==================================================================================================
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
